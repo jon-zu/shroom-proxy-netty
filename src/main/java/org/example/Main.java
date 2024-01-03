@@ -8,28 +8,24 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
-import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
 import io.netty.handler.ssl.SslContextBuilder;
-import io.netty.handler.ssl.util.SelfSignedCertificate;
-import org.example.proxy.ProxyClientCodec;
 import org.example.proxy.ProxyHandshake;
-import org.example.proxy.ProxyServerCodec;
+import org.example.shroom.ShroomServerCodec;
 
 import javax.net.ssl.SSLException;
-import java.io.File;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.security.cert.CertificateException;
+import java.nio.file.Paths;
 
 public class Main {
 
     private static final int PORT = 8484;
 
-    public static void main(String[] args) throws CertificateException, SSLException, UnknownHostException {
-        var certFile = new File("/home/jonas/projects/shroom/shroom_proxy/keys/cert.pem");
-        var keyFile = new File("/home/jonas/projects/shroom/shroom_proxy/keys/key.pem");
+    public static void main(String[] args) throws SSLException, UnknownHostException {
+        var keyDir = Paths.get(System.getProperty("user.home"), "projects/shroom/shroom_proxy/keys");
 
-
+        var certFile = Paths.get(keyDir.toString(), "cert.pem").toFile();
+        var keyFile = Paths.get(keyDir.toString(), "key.pem").toFile();
         var sslContext = SslContextBuilder.forServer(certFile, keyFile).build();
 
 
@@ -48,10 +44,15 @@ public class Main {
                     .channel(NioServerSocketChannel.class)
                     .childHandler(new ChannelInitializer<SocketChannel>() {
                         @Override
-                        protected void initChannel(SocketChannel ch) throws UnknownHostException {
+                        protected void initChannel(SocketChannel ch) {
                             ChannelPipeline pipeline = ch.pipeline();
-                            pipeline.addLast(sslContext.newHandler(ch.alloc()));
-                            pipeline.addLast(new ProxyServerCodec());
+                            /*pipeline.addLast(sslContext.newHandler(ch.alloc()));
+                            pipeline.addLast(new ProxyServerCodec());*/
+                            pipeline.addLast(new ShroomServerCodec(
+                                    (short)83,
+                                    '1',
+                                    (byte)8 // Global
+                            ));
                             pipeline.addLast(new EchoHandler());
                         }
                     });

@@ -26,7 +26,7 @@ class ProxyHandshakeTest {
     }
 
     @Test
-    void failedParse() throws Exception {
+    void failedParse() {
         // Wrong header
         assertThrows(Exception.class, () -> parse("FFFF123456789ABC7F000001"));
         // Incomplete

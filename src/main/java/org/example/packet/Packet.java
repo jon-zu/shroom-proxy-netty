@@ -1,17 +1,30 @@
-package org.example;
+package org.example.packet;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.util.ReferenceCounted;
 
-public class Packet implements ReferenceCounted {
-    private final ByteBuf buf;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 
-    public Packet(ByteBuf buf) {
+public class Packet implements ReferenceCounted {
+    public static final int MAX_STRING_LEN = 2048;
+    public static final int MAX_PACKET_LEN = 2 * 4096;
+
+    // TODO verify this, WZ files are 100% Latin-1
+    protected static final Charset CHARSET = StandardCharsets.ISO_8859_1;
+
+    protected final ByteBuf buf;
+
+    protected Packet(ByteBuf buf) {
         this.buf = buf;
     }
 
     public ByteBuf getBuf() {
         return buf;
+    }
+
+    public int len() {
+        return buf.readableBytes();
     }
 
     @Override

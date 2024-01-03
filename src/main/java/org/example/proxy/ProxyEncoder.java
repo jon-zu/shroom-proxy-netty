@@ -4,14 +4,15 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.EncoderException;
 import io.netty.handler.codec.MessageToByteEncoder;
-import org.example.Packet;
+import org.example.packet.Packet;
+import org.example.packet.PacketWriter;
 
-public class ProxyEncoder extends MessageToByteEncoder<Packet> {
+public class ProxyEncoder extends MessageToByteEncoder<PacketWriter> {
     @Override
-    protected void encode(ChannelHandlerContext channelHandlerContext, Packet packet, ByteBuf byteBuf) throws Exception {
+    protected void encode(ChannelHandlerContext channelHandlerContext, PacketWriter packet, ByteBuf byteBuf) {
         var buf = packet.getBuf();
-        var len = buf.readableBytes();
-        if(len > ProxyHandler.MAX_PKT_LEN)
+        var len = packet.len();
+        if(len > Packet.MAX_PACKET_LEN)
             throw new EncoderException("Proxy encoder max frame size");
 
         byteBuf.writeInt(len);

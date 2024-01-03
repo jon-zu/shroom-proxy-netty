@@ -2,6 +2,7 @@ package org.example.proxy;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import io.netty.handler.codec.EncoderException;
 
 import java.net.InetAddress;
 
@@ -41,10 +42,8 @@ public class ProxyHandshake {
         buf.writeShort(this.proxyVersion);
 
         byte[] addr = this.remoteAddress.getAddress();
-       /*
-        TODO
         if(addr.length > 4)
-            throw new Exception("Not an IPv4");*/
+            throw new EncoderException("Not an IPv4");
         buf.writeBytes(addr);
         return buf;
     }

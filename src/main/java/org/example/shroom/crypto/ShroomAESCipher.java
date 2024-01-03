@@ -32,7 +32,7 @@ import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 
 public class ShroomAESCipher {
-    private final static SecretKeySpec skey = new SecretKeySpec(
+    private final static SecretKeySpec AES_KEY = new SecretKeySpec(
             new byte[]{
                     0x13, 0x00, 0x00, 0x00,
                     0x08, 0x00, 0x00, 0x00,
@@ -43,7 +43,7 @@ public class ShroomAESCipher {
                     0x33, 0x00, 0x00, 0x00,
                     0x52, 0x00, 0x00, 0x00}, "AES");
 
-    private static final byte[] funnyBytes = new byte[]{
+    public static final byte[] IG_SHUFFLE = new byte[]{
             (byte) 0xEC, (byte) 0x3F, (byte) 0x77, (byte) 0xA4, (byte) 0x45, (byte) 0xD0, (byte) 0x71, (byte) 0xBF,
             (byte) 0xB7, (byte) 0x98, (byte) 0x20, (byte) 0xFC, (byte) 0x4B, (byte) 0xE9, (byte) 0xB3, (byte) 0xE1,
             (byte) 0x5C, (byte) 0x22, (byte) 0xF7, (byte) 0x0C, (byte) 0x44, (byte) 0x1B, (byte) 0x81, (byte) 0xBD,
@@ -77,6 +77,8 @@ public class ShroomAESCipher {
             (byte) 0x84, (byte) 0x7F, (byte) 0x61, (byte) 0x1E, (byte) 0xCF, (byte) 0xC5, (byte) 0xD1, (byte) 0x56,
             (byte) 0x3D, (byte) 0xCA, (byte) 0xF4, (byte) 0x05, (byte) 0xC6, (byte) 0xE5, (byte) 0x08, (byte) 0x49};
 
+    public static final byte[] IG_SEED = {(byte) 0xf2, 0x53, (byte) 0x50, (byte) 0xc6};
+
     private final short mapleVersion;
     private final Cipher cipher;
     private byte[] iv;
@@ -84,135 +86,145 @@ public class ShroomAESCipher {
     public ShroomAESCipher(InitializationVector iv, short mapleVersion) {
         try {
             cipher = Cipher.getInstance("AES");
-            cipher.init(Cipher.ENCRYPT_MODE, skey);
+            cipher.init(Cipher.ENCRYPT_MODE, AES_KEY);
         } catch (NoSuchAlgorithmException | NoSuchPaddingException | InvalidKeyException e) {
             throw new RuntimeException(e);
         }
 
         this.iv = iv.getBytes();
-        this.mapleVersion = (short) (((mapleVersion >> 8) & 0xFF) | ((mapleVersion << 8) & 0xFF00));
+        this.mapleVersion = mapleVersion;
     }
 
-    private static byte[] multiplyBytes(byte[] in, int count, int mul) {
-        final int size = count * mul;
-        byte[] ret = new byte[size];
-        for (int x = 0; x < size; x++) {
-            ret[x] = in[x % count];
+
+    private void nextKey(byte[] key) {
+        try {
+            byte[] newKey =  cipher.doFinal(key);
+            System.arraycopy(newKey, 0, key, 0, 16);
+        } catch (IllegalBlockSizeException | BadPaddingException e) {
+            //e.printStackTrace();
+            throw new RuntimeException(e);
         }
-        return ret;
+    }
+
+    private void cryptBlock(ByteBuf buf, int offset, int length, byte[] key) {
+        final int CHUNK_LEN = 16;
+        int chunks = length / CHUNK_LEN;
+        int remaining = length % CHUNK_LEN;
+
+        for (int i = 0; i < chunks; i++) {
+            nextKey(key);
+            for(int j = 0; j < CHUNK_LEN; j++) {
+                int m = offset + j;
+                buf.setByte(m, buf.getByte(m) ^ key[j]);
+            }
+            offset += CHUNK_LEN;
+        }
+
+        nextKey(key);
+        for(int i = 0; i < remaining; i++) {
+            int m = offset + i;
+            buf.setByte(m, (byte)(buf.getByte(m) ^ key[i]));
+        }
     }
 
     public void crypt(ByteBuf data, int offset, int length) {
-        int remaining = length;
-        int llength = 0x5B0;
-        int start = 0;
-        while (remaining > 0) {
-            byte[] myIv = multiplyBytes(this.iv, 4, 4);
-            if (remaining < llength) {
-                llength = remaining;
-            }
-            for (int x = start; x < (start + llength); x++) {
-                if ((x - start) % myIv.length == 0) {
-                    byte[] newIv;
-                    try {
-                        newIv = cipher.doFinal(myIv);
-                    } catch (IllegalBlockSizeException | BadPaddingException e) {
-                        //e.printStackTrace();
-                        throw new RuntimeException(e);
-                    }
+        final int FIRST_BLOCK_LEN = 0x5B0;
+        final int BLOCK_LEN = FIRST_BLOCK_LEN + 4;
 
-                    System.arraycopy(newIv, 0, myIv, 0, myIv.length);
-                }
-                int j = offset + x;
-                data.setByte(j, data.getByte(j) ^ myIv[(x - start) % myIv.length]);
-            }
-            start += llength;
-            remaining -= llength;
-            llength = 0x5B4;
+        // Expand iv to key
+        byte[] key = expandToKey();
+
+        // Decode only first block, fast path for most packets
+        if(length < FIRST_BLOCK_LEN) {
+            cryptBlock(data, offset, length, key.clone());
+            return;
         }
+
+        // Decode first block
+        cryptBlock(data, offset, FIRST_BLOCK_LEN, key.clone());
+        offset += FIRST_BLOCK_LEN;
+        length -= FIRST_BLOCK_LEN;
+
+        int blocks = length / BLOCK_LEN;
+        int remaining = length % BLOCK_LEN;
+
+        // Decode all pending blocks
+        for(int i = 0; i < blocks; i++) {
+            cryptBlock(data, offset, BLOCK_LEN, key.clone());
+            offset += BLOCK_LEN;
+        }
+
+        // Decode last block
+        if(remaining > 0) {
+            cryptBlock(data, offset, remaining, key.clone());
+        }
+
+        // Update iv
         updateIv();
     }
 
-    private synchronized void updateIv() {
-        this.iv = getNewIv(this.iv);
+    private void updateIv() {
+        this.iv = Util.intToLittleEndian(igHash(this.iv));
     }
 
-    public byte[] getPacketHeader(int length) {
-        int iiv = (iv[3]) & 0xFF;
-        iiv |= (iv[2] << 8) & 0xFF00;
-        iiv ^= mapleVersion;
-        int mlength = ((length << 8) & 0xFF00) | (length >>> 8);
-        int xoredIv = iiv ^ mlength;
-        byte[] ret = new byte[4];
-        ret[0] = (byte) ((iiv >>> 8) & 0xFF);
-        ret[1] = (byte) (iiv & 0xFF);
-        ret[2] = (byte) ((xoredIv >>> 8) & 0xFF);
-        ret[3] = (byte) (xoredIv & 0xFF);
+    public byte[] expandToKey() {
+        final int KEY_LEN = 16;
+        byte[] ret = new byte[KEY_LEN];
+        for (int x = 0; x < KEY_LEN; x++) {
+            ret[x] = this.iv[x % 4];
+        }
         return ret;
     }
 
-    public static int getPacketLength(int packetHeader) {
-        int packetLength = ((packetHeader >>> 16) ^ (packetHeader & 0xFFFF));
-        packetLength = ((packetLength << 8) & 0xFF00) | ((packetLength >>> 8) & 0xFF);
-        return packetLength;
+    public int encodeHeader(int lenght) {
+        short keyHigh = Util.littleEndianToShort(new byte[] {
+                iv[2],
+                iv[3]
+        });
+
+        int low = keyHigh ^ this.mapleVersion;
+        int high = low ^ lenght;
+        return  low & 0xFFFF | (high << 16);
     }
 
-    private boolean checkPacket(byte[] packet) {
-        return ((((packet[0] ^ iv[2]) & 0xFF) == ((mapleVersion >> 8) & 0xFF)) &&
-                (((packet[1] ^ iv[3]) & 0xFF) == (mapleVersion & 0xFF)));
-    }
 
-    public boolean isValidHeader(int packetHeader) {
-        byte[] packetHeaderBuf = new byte[2];
-        packetHeaderBuf[0] = (byte) ((packetHeader >> 24) & 0xFF);
-        packetHeaderBuf[1] = (byte) ((packetHeader >> 16) & 0xFF);
-        return checkPacket(packetHeaderBuf);
-    }
-
-    public static byte[] getNewIv(byte[] oldIv) {
-        byte[] in = {(byte) 0xf2, 0x53, (byte) 0x50, (byte) 0xc6};
-        for (int x = 0; x < 4; x++) {
-            funnyShit(oldIv[x], in);
-        }
-        return in;
+    public int decodeHeader(int hdr) {
+        short keyHigh = Util.littleEndianToShort(new byte[] {
+                iv[2],
+                iv[3]
+        });
+        short hdrLow = (short) (hdr & 0xFFFF);
+        short hdrHigh = (short) ((hdr >> 16) & 0xFFFF);
+        short versionCheck = (short) (keyHigh ^ hdrLow);
+        if(versionCheck != mapleVersion)
+            throw new InvalidPacketHeaderException("Attempted to decode a packet with an invalid header", hdr);
+        return hdrHigh ^ hdrLow;
     }
 
     @Override
     public String toString() {
-        return "IV: ";
+        return "IV: " +  new InitializationVector(iv) + " MapleVersion: " + mapleVersion;
     }
 
-    private static byte[] funnyShit(byte inputByte, byte[] in) {
-        byte elina = in[1];
-        byte anna = inputByte;
-        byte moritz = funnyBytes[(int) elina & 0xFF];
-        moritz -= inputByte;
-        in[0] += moritz;
-        moritz = in[2];
-        moritz ^= funnyBytes[(int) anna & 0xFF];
-        elina -= (int) moritz & 0xFF;
-        in[1] = elina;
-        elina = in[3];
-        moritz = elina;
-        elina -= (int) in[0] & 0xFF;
-        moritz = funnyBytes[(int) moritz & 0xFF];
-        moritz += inputByte;
-        moritz ^= in[2];
-        in[2] = moritz;
-        elina += (int) funnyBytes[(int) anna & 0xFF] & 0xFF;
-        in[3] = elina;
-        int merry = ((int) in[0]) & 0xFF;
-        merry |= (in[1] << 8) & 0xFF00;
-        merry |= (in[2] << 16) & 0xFF0000;
-        merry |= (in[3] << 24) & 0xFF000000;
-        int ret_value = merry;
-        ret_value = ret_value >>> 0x1d;
-        merry = merry << 3;
-        ret_value = ret_value | merry;
-        in[0] = (byte) (ret_value & 0xFF);
-        in[1] = (byte) ((ret_value >> 8) & 0xFF);
-        in[2] = (byte) ((ret_value >> 16) & 0xFF);
-        in[3] = (byte) ((ret_value >> 24) & 0xFF);
-        return in;
+    public static int igHash(byte[] data) {
+        int hash = Util.littleEndianToInt(IG_SEED);
+        for (byte b : data) {
+            hash = igHashUpdate(hash, b);
+        }
+        return hash;
+    }
+
+    static byte shuffle(byte b) {
+        return IG_SHUFFLE[b & 0xFF];
+    }
+
+    public  static int igHashUpdate(int key, byte b) {
+        byte[] k = Util.intToLittleEndian(key);
+        k[0] += (byte) (shuffle(k[1]) - b);
+        k[1] -= (byte) (k[2] ^ shuffle(b));
+        k[2] ^= (byte) (shuffle(k[3]) + b);
+        k[3] -= (byte) (k[0] - shuffle(b));
+
+        return Integer.rotateLeft(Util.littleEndianToInt(k), 3);
     }
 }

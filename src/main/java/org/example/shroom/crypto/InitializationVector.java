@@ -1,15 +1,24 @@
 package org.example.shroom.crypto;
 
 public class InitializationVector {
-    private final byte[] bytes;
+    private final int iv;
 
-    private InitializationVector(byte[] bytes) {
-        this.bytes = bytes;
+    public InitializationVector(byte[] bytes) {
+        this.iv = Util.littleEndianToInt(bytes);
+    }
+
+    public InitializationVector(int iv) {
+        this.iv = iv;
+    }
+
+    public int getInt() {
+        return this.iv;
     }
 
     public byte[] getBytes() {
-        return bytes;
+        return Util.intToLittleEndian(this.iv);
     }
+
 
     public static InitializationVector generateSend() {
         byte[] ivSend = {82, 48, 120, getRandomByte()};

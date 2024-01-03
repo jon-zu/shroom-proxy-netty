@@ -1,11 +1,8 @@
 package org.example.proxy;
 
-import io.netty.channel.*;
-
-import java.net.InetAddress;
+import io.netty.channel.CombinedChannelDuplexHandler;
 
 public class ProxyHandler extends CombinedChannelDuplexHandler<ProxyDecoder, ProxyEncoder> {
-    public static final int MAX_PKT_LEN = 2 * 4096;
     private final ProxyHandshake handshake;
 
     public ProxyHandler(ProxyHandshake handshake) {
