@@ -10,7 +10,9 @@ import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.ssl.SslContextBuilder;
 import org.example.proxy.ProxyHandshake;
+import org.example.proxyws.ProxyHttpHandler;
 import org.example.shroom.ShroomServerCodec;
+import io.netty.handler.codec.http.HttpServerCodec;
 
 import javax.net.ssl.SSLException;
 import java.net.InetAddress;
@@ -48,12 +50,15 @@ public class Main {
                             ChannelPipeline pipeline = ch.pipeline();
                             /*pipeline.addLast(sslContext.newHandler(ch.alloc()));
                             pipeline.addLast(new ProxyServerCodec());*/
-                            pipeline.addLast(new ShroomServerCodec(
+                            /*pipeline.addLast(new ShroomServerCodec(
                                     (short)83,
                                     '1',
                                     (byte)8 // Global
                             ));
-                            pipeline.addLast(new EchoHandler());
+                            pipeline.addLast(new EchoHandler());*/
+                            pipeline.addLast(sslContext.newHandler(ch.alloc()));
+                            pipeline.addLast("httpServerCodec", new HttpServerCodec());
+                            pipeline.addLast(new ProxyHttpHandler());
                         }
                     });
 
